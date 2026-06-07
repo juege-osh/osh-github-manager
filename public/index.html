@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OSH GitHub Manager</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">GH</div>
+          <div>
+            <h1>OSH GitHub Manager</h1>
+            <p id="ownerLabel">未连接</p>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="主导航">
+          <button class="nav-item active" data-view="dashboard">总览</button>
+          <button class="nav-item" data-view="members">成员</button>
+          <button class="nav-item" data-view="repositories">仓库</button>
+          <button class="nav-item" data-view="teams">团队</button>
+          <button class="nav-item" data-view="bulk">批量</button>
+          <button class="nav-item" data-view="jobs">任务</button>
+          <button class="nav-item" data-view="audit">审计</button>
+          <button class="nav-item" data-view="settings">设置</button>
+          <button class="nav-item" data-view="apply">申请入口</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <span class="eyebrow">Access Ops</span>
+            <h2 id="pageTitle">总览</h2>
+          </div>
+          <div class="top-actions">
+            <div id="authBox" class="token-box hidden">
+              <input id="adminTokenInput" type="password" placeholder="Admin Token" autocomplete="off" />
+              <button id="saveTokenButton" class="button ghost">保存</button>
+            </div>
+            <button id="refreshButton" class="button">刷新</button>
+          </div>
+        </header>
+
+        <section id="alertHost" class="alerts" aria-live="polite"></section>
+
+        <section class="view active" id="view-dashboard">
+          <div class="metrics-grid">
+            <article class="metric">
+              <span>成员</span>
+              <strong id="metricMembers">0</strong>
+              <small id="metricPending">0 待审批</small>
+            </article>
+            <article class="metric">
+              <span>仓库</span>
+              <strong id="metricRepos">0</strong>
+              <small id="metricManaged">0 纳入管理</small>
+            </article>
+            <article class="metric">
+              <span>任务</span>
+              <strong id="metricJobs">0</strong>
+              <small id="metricRunning">0 运行中</small>
+            </article>
+            <article class="metric">
+              <span>团队</span>
+              <strong id="metricTeams">0</strong>
+              <small id="metricManagedTeams">0 纳入管理</small>
+            </article>
+            <article class="metric warn">
+              <span>异常协作者</span>
+              <strong id="metricUnexpected">0</strong>
+              <small>最近审计结果</small>
+            </article>
+          </div>
+
+          <div class="content-grid two">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>待处理成员</h3>
+                <button class="button small" data-view-shortcut="members">打开成员</button>
+              </div>
+              <div id="pendingList" class="list compact"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>最近任务</h3>
+                <button class="button small" data-view-shortcut="jobs">打开任务</button>
+              </div>
+              <div id="recentJobs" class="list compact"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-members">
+          <div class="toolbar">
+            <input id="memberSearch" type="search" placeholder="搜索成员、邮箱、标签" />
+            <select id="memberStatusFilter">
+              <option value="">全部状态</option>
+              <option value="pending">待审批</option>
+              <option value="approved">已批准</option>
+              <option value="rejected">已拒绝</option>
+              <option value="disabled">已禁用</option>
+            </select>
+            <button id="openAddMemberButton" class="button">新增成员</button>
+            <a class="button ghost" href="/api/export/members.csv" id="exportMembersLink">导出 CSV</a>
+          </div>
+          <div id="membersTable" class="table-wrap"></div>
+        </section>
+
+        <section class="view" id="view-repositories">
+          <div class="toolbar">
+            <input id="repoSearch" type="search" placeholder="搜索仓库" />
+            <select id="repoManagedFilter">
+              <option value="">全部仓库</option>
+              <option value="true">纳入管理</option>
+              <option value="false">未纳入管理</option>
+            </select>
+            <button id="syncReposButton" class="button">同步 GitHub 仓库</button>
+            <button id="auditAllButton" class="button ghost">审计管理仓库</button>
+          </div>
+          <div id="reposTable" class="table-wrap"></div>
+        </section>
+
+        <section class="view" id="view-teams">
+          <div class="toolbar">
+            <input id="teamSearch" type="search" placeholder="搜索团队" />
+            <select id="teamManagedFilter">
+              <option value="">全部团队</option>
+              <option value="true">纳入管理</option>
+              <option value="false">未纳入管理</option>
+            </select>
+            <button id="syncTeamsButton" class="button">同步 GitHub Teams</button>
+          </div>
+          <div id="teamsTable" class="table-wrap"></div>
+        </section>
+
+        <section class="view" id="view-bulk">
+          <div class="content-grid two">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>批量邀请</h3>
+              </div>
+              <form id="bulkInviteForm" class="form-grid">
+                <label>
+                  GitHub 账号
+                  <textarea name="usernames" rows="5" placeholder="octocat, hubot"></textarea>
+                </label>
+                <label>
+                  仓库
+                  <textarea name="repositories" rows="5" placeholder="留空使用全部管理仓库"></textarea>
+                </label>
+                <label>
+                  权限
+                  <select name="permission">
+                    <option value="push">push</option>
+                    <option value="pull">pull</option>
+                    <option value="triage">triage</option>
+                    <option value="maintain">maintain</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </label>
+                <label class="toggle-row">
+                  <input name="dryRun" type="checkbox" />
+                  <span>只预演</span>
+                </label>
+                <button class="button" type="submit">创建邀请任务</button>
+              </form>
+            </section>
+
+            <section class="panel danger-panel">
+              <div class="panel-head">
+                <h3>批量撤销</h3>
+              </div>
+              <form id="bulkRemoveForm" class="form-grid">
+                <label>
+                  GitHub 账号
+                  <textarea name="usernames" rows="5" placeholder="octocat, hubot"></textarea>
+                </label>
+                <label>
+                  仓库
+                  <textarea name="repositories" rows="5" placeholder="留空使用全部管理仓库"></textarea>
+                </label>
+                <label class="toggle-row">
+                  <input name="dryRun" type="checkbox" />
+                  <span>只预演</span>
+                </label>
+                <button class="button danger" type="submit">创建撤销任务</button>
+              </form>
+            </section>
+          </div>
+
+          <section class="panel import-panel">
+            <div class="panel-head">
+              <h3>批量录入成员</h3>
+            </div>
+            <form id="bulkMemberForm" class="form-grid">
+              <label>
+                成员清单
+                <textarea name="members" rows="6" placeholder="octocat, 张三, zhangsan@example.com, backend|core"></textarea>
+              </label>
+              <label>
+                默认权限
+                <select name="permission">
+                  <option value="push">push</option>
+                  <option value="pull">pull</option>
+                  <option value="triage">triage</option>
+                  <option value="maintain">maintain</option>
+                  <option value="admin">admin</option>
+                </select>
+              </label>
+              <button class="button" type="submit">导入为已批准成员</button>
+            </form>
+          </section>
+
+          <div class="content-grid two bulk-teams">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>团队成员</h3>
+              </div>
+              <form id="teamMemberForm" class="form-grid">
+                <label>
+                  Team slug
+                  <input name="teamSlug" placeholder="core-team" />
+                </label>
+                <label>
+                  GitHub 账号
+                  <textarea name="usernames" rows="5" placeholder="octocat, hubot"></textarea>
+                </label>
+                <label>
+                  角色
+                  <select name="role">
+                    <option value="member">member</option>
+                    <option value="maintainer">maintainer</option>
+                  </select>
+                </label>
+                <label class="toggle-row">
+                  <input name="dryRun" type="checkbox" />
+                  <span>只预演</span>
+                </label>
+                <div class="row-actions">
+                  <button class="button" type="submit" data-team-member-action="add">加入团队</button>
+                  <button class="button ghost" type="submit" data-team-member-action="remove">移出团队</button>
+                </div>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>团队仓库授权</h3>
+              </div>
+              <form id="teamRepoForm" class="form-grid">
+                <label>
+                  Team slug
+                  <input name="teamSlug" placeholder="core-team" />
+                </label>
+                <label>
+                  仓库
+                  <textarea name="repositories" rows="5" placeholder="留空使用全部管理仓库"></textarea>
+                </label>
+                <label>
+                  权限
+                  <select name="permission">
+                    <option value="push">push</option>
+                    <option value="pull">pull</option>
+                    <option value="triage">triage</option>
+                    <option value="maintain">maintain</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </label>
+                <label class="toggle-row">
+                  <input name="dryRun" type="checkbox" />
+                  <span>只预演</span>
+                </label>
+                <div class="row-actions">
+                  <button class="button" type="submit" data-team-repo-action="grant">授权仓库</button>
+                  <button class="button ghost" type="submit" data-team-repo-action="remove">撤销仓库</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-jobs">
+          <div class="toolbar">
+            <button id="reloadJobsButton" class="button">刷新任务</button>
+          </div>
+          <div id="jobsList" class="jobs"></div>
+        </section>
+
+        <section class="view" id="view-audit">
+          <div class="toolbar">
+            <a class="button ghost" href="/api/export/state" id="exportStateLink">导出状态 JSON</a>
+          </div>
+          <div id="auditLog" class="timeline"></div>
+        </section>
+
+        <section class="view" id="view-settings">
+          <section class="panel settings-panel">
+            <div class="panel-head">
+              <h3>全局设置</h3>
+              <button id="saveSettingsButton" class="button">保存设置</button>
+            </div>
+            <form id="settingsForm" class="settings-grid">
+              <label>
+                默认权限
+                <select name="defaultPermission">
+                  <option value="pull">pull</option>
+                  <option value="triage">triage</option>
+                  <option value="push">push</option>
+                  <option value="maintain">maintain</option>
+                  <option value="admin">admin</option>
+                </select>
+              </label>
+              <label class="toggle-row">
+                <input name="autoInviteOnApproval" type="checkbox" />
+                <span>批准后自动邀请</span>
+              </label>
+              <label class="toggle-row">
+                <input name="includeArchivedRepositories" type="checkbox" />
+                <span>同步归档仓库</span>
+              </label>
+              <label class="toggle-row">
+                <input name="requireApproval" type="checkbox" />
+                <span>申请需要审批</span>
+              </label>
+            </form>
+          </section>
+        </section>
+
+        <section class="view" id="view-apply">
+          <div class="content-grid two">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>成员申请</h3>
+              </div>
+              <form id="applyForm" class="form-grid">
+                <label>
+                  GitHub 账号
+                  <input name="githubUsername" required placeholder="octocat" />
+                </label>
+                <label>
+                  姓名
+                  <input name="displayName" placeholder="张三" />
+                </label>
+                <label>
+                  邮箱
+                  <input name="email" type="email" placeholder="name@example.com" />
+                </label>
+                <label>
+                  申请权限
+                  <select name="requestedPermission">
+                    <option value="push">push</option>
+                    <option value="pull">pull</option>
+                    <option value="triage">triage</option>
+                    <option value="maintain">maintain</option>
+                  </select>
+                </label>
+                <label>
+                  备注
+                  <textarea name="note" rows="4" placeholder="团队、负责模块、加入原因"></textarea>
+                </label>
+                <button class="button" type="submit">提交申请</button>
+              </form>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <h3>当前连接</h3>
+              </div>
+              <dl class="definition-list">
+                <div>
+                  <dt>GitHub Owner</dt>
+                  <dd id="configOwner">未配置</dd>
+                </div>
+                <div>
+                  <dt>GitHub Token</dt>
+                  <dd id="configToken">未配置</dd>
+                </div>
+                <div>
+                  <dt>管理鉴权</dt>
+                  <dd id="configAdminAuth">关闭</dd>
+                </div>
+              </dl>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="memberDialog">
+      <form id="memberForm" method="dialog" class="dialog-card">
+        <div class="dialog-head">
+          <h3>新增成员</h3>
+          <button class="icon-button" value="cancel" aria-label="关闭">×</button>
+        </div>
+        <label>
+          GitHub 账号
+          <input name="githubUsername" required placeholder="octocat" />
+        </label>
+        <label>
+          姓名
+          <input name="displayName" placeholder="张三" />
+        </label>
+        <label>
+          邮箱
+          <input name="email" type="email" placeholder="name@example.com" />
+        </label>
+        <label>
+          权限
+          <select name="requestedPermission">
+            <option value="push">push</option>
+            <option value="pull">pull</option>
+            <option value="triage">triage</option>
+            <option value="maintain">maintain</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+        <label>
+          标签
+          <input name="tags" placeholder="backend, core" />
+        </label>
+        <div class="dialog-actions">
+          <button class="button ghost" value="cancel">取消</button>
+          <button class="button" id="saveMemberButton" value="default">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
