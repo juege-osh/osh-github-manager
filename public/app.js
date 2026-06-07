@@ -4,11 +4,13 @@ const state = {
     members: [],
     repositories: [],
     teams: [],
+    accessRequests: [],
     jobs: [],
     auditLog: [],
     settings: {}
   },
   adminToken: localStorage.getItem("osh_admin_token") || "",
+  currentUser: null,
   view: "dashboard",
   filters: {
     memberSearch: "",
@@ -27,6 +29,10 @@ const els = {
   authBox: document.querySelector("#authBox"),
   adminTokenInput: document.querySelector("#adminTokenInput"),
   saveTokenButton: document.querySelector("#saveTokenButton"),
+  loginLink: document.querySelector("#loginLink"),
+  userMenu: document.querySelector("#userMenu"),
+  currentUserLabel: document.querySelector("#currentUserLabel"),
+  logoutButton: document.querySelector("#logoutButton"),
   refreshButton: document.querySelector("#refreshButton"),
   navItems: document.querySelectorAll(".nav-item"),
   views: document.querySelectorAll(".view"),
@@ -67,6 +73,8 @@ const els = {
   settingsForm: document.querySelector("#settingsForm"),
   saveSettingsButton: document.querySelector("#saveSettingsButton"),
   applyForm: document.querySelector("#applyForm"),
+  applyLoginNotice: document.querySelector("#applyLoginNotice"),
+  applyRepoList: document.querySelector("#applyRepoList"),
   configOwner: document.querySelector("#configOwner"),
   configToken: document.querySelector("#configToken"),
   configAdminAuth: document.querySelector("#configAdminAuth"),
@@ -91,6 +99,7 @@ init();
 async function init() {
   bindEvents();
   await loadConfig();
+  await loadMe();
   await loadState();
   render();
   setInterval(refreshJobsQuietly, 2500);
@@ -107,6 +116,7 @@ function bindEvents() {
 
   els.refreshButton.addEventListener("click", () => loadState(true));
   els.saveTokenButton.addEventListener("click", saveAdminToken);
+  els.logoutButton.addEventListener("click", logout);
 
   els.memberSearch.addEventListener("input", () => {
     state.filters.memberSearch = els.memberSearch.value;
@@ -217,7 +227,7 @@ function bindEvents() {
     const submitter = event.submitter;
     const action = submitter?.dataset.teamMemberAction || "add";
     const payload = formData(els.teamMemberForm);
-  const teamSlug = String(payload.teamSlug || "").trim();
+    const teamSlug = String(payload.teamSlug || "").trim();
     if (!teamSlug) return showAlert("Team slug 必填", "error");
     const url = `/api/teams/${encodeURIComponent(teamSlug)}/members/${action}`;
     await api(url, {
@@ -269,6 +279,7 @@ function bindEvents() {
   els.applyForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = formData(els.applyForm);
+    payload.repositories = selectedApplyRepositories();
     await api("/api/apply", { method: "POST", body: payload, admin: false });
     showAlert("申请已提交", "success");
     els.applyForm.reset();
@@ -334,6 +345,15 @@ function bindEvents() {
   });
 }
 
+async function loadMe() {
+  try {
+    const { user } = await api("/api/me", { admin: false });
+    state.currentUser = user;
+  } catch {
+    state.currentUser = null;
+  }
+}
+
 async function loadConfig() {
   state.config = await api("/api/config", { admin: false });
   els.ownerLabel.textContent = state.config.githubOwner || "未配置 GitHub Owner";
@@ -350,9 +370,26 @@ async function loadConfig() {
 async function loadState(withAlert = false) {
   try {
     state.data = await api("/api/state");
+    state.currentUser = state.data.currentUser || state.currentUser;
     render();
     if (withAlert) showAlert("数据已刷新", "success");
   } catch (error) {
+    if (error.status === 401) {
+      const { repositories } = await api("/api/public/repositories", { admin: false });
+      state.data = {
+        members: [],
+        repositories,
+        teams: [],
+        accessRequests: [],
+        jobs: [],
+        auditLog: [],
+        settings: { defaultPermission: "push" },
+        config: state.config,
+        currentUser: null
+      };
+      render();
+      return;
+    }
     showAlert(error.message, "error");
   }
 }
@@ -389,7 +426,9 @@ async function api(url, options = {}) {
 
   if (!response.ok) {
     const message = typeof data === "string" ? data : data.error || "请求失败";
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
 
   return data;
@@ -407,14 +446,38 @@ function saveAdminToken() {
 }
 
 function render() {
+  renderAuth();
+  applyRoleVisibility();
   renderDashboard();
   renderMembers();
   renderRepositories();
   renderTeams();
+  renderApplyRepositories();
   renderJobs();
   renderAuditLog();
   renderSettings();
   updateExportLinks();
+}
+
+function renderAuth() {
+  const user = state.currentUser;
+  els.loginLink.classList.toggle("hidden", Boolean(user));
+  els.userMenu.classList.toggle("hidden", !user);
+  els.currentUserLabel.textContent = user ? `${user.githubLogin} · ${user.role === "admin" ? "管理员" : "普通用户"}` : "";
+  els.applyForm.classList.toggle("hidden", !user);
+  els.applyLoginNotice.classList.toggle("hidden", Boolean(user));
+}
+
+function applyRoleVisibility() {
+  const isAdmin = state.currentUser?.role === "admin";
+  document.querySelectorAll(".nav-item").forEach((button) => {
+    const view = button.dataset.view;
+    const allowed = isAdmin || view === "apply";
+    button.classList.toggle("hidden", !allowed);
+  });
+  if (!isAdmin && state.view !== "apply") {
+    switchView("apply");
+  }
 }
 
 function switchView(view) {
@@ -461,6 +524,9 @@ function renderDashboard() {
 }
 
 function renderPendingItem(member) {
+  const requested = member.requestedRepositories?.length
+    ? `申请项目：${member.requestedRepositories.join(", ")}`
+    : "申请项目：全部管理仓库";
   return `
     <article class="list-item">
       <div>
@@ -469,6 +535,7 @@ function renderPendingItem(member) {
           ${statusBadge(member.status)}
         </div>
         <div class="item-meta">${escapeHtml(member.displayName || member.email || member.note || "无备注")}</div>
+        <div class="item-meta">${escapeHtml(requested)}</div>
       </div>
       <div class="row-actions">
         <button class="button small" data-action="approve-member" data-username="${escapeAttr(member.githubUsername)}">批准</button>
@@ -541,6 +608,7 @@ function renderMemberRow(member) {
       <td>
         <a class="link" href="${escapeAttr(profileUrl)}" target="_blank" rel="noreferrer">${escapeHtml(member.githubUsername)}</a>
         <div class="item-meta">${escapeHtml(member.displayName || member.email || member.note || "")}</div>
+        <div class="item-meta">${escapeHtml((member.requestedRepositories || []).join(", ") || "未指定申请项目")}</div>
       </td>
       <td>${statusBadge(member.status)}</td>
       <td>${permissionBadge(member.requestedPermission)}</td>
@@ -593,6 +661,20 @@ function renderRepositories() {
       </tbody>
     </table>
   `;
+}
+
+function renderApplyRepositories() {
+  const repos = managedRepositories();
+  if (!repos.length) {
+    els.applyRepoList.innerHTML = `<div class="empty">暂无可申请仓库</div>`;
+    return;
+  }
+  els.applyRepoList.innerHTML = repos.map((repo) => `
+    <label class="checkbox-item">
+      <input type="checkbox" name="repositories" value="${escapeAttr(repo.name)}" checked />
+      <span>${escapeHtml(repo.name)}</span>
+    </label>
+  `).join("");
 }
 
 function renderRepositoryRow(repo) {
@@ -766,8 +848,10 @@ function updateExportLinks() {
 }
 
 async function approveMember(username) {
-  const repositories = managedRepositories().map((repo) => repo.name);
   const member = state.data.members.find((item) => item.githubUsername === username);
+  const repositories = member?.requestedRepositories?.length
+    ? member.requestedRepositories
+    : managedRepositories().map((repo) => repo.name);
   await api(`/api/members/${encodeURIComponent(username)}/approve`, {
     method: "POST",
     body: {
@@ -777,6 +861,14 @@ async function approveMember(username) {
     }
   });
   showAlert(`已批准 ${username}，邀请任务已创建`, "success");
+  await loadState();
+}
+
+async function logout() {
+  await api("/api/logout", { method: "POST", body: {}, admin: false });
+  state.currentUser = null;
+  showAlert("已退出", "success");
+  await loadMe();
   await loadState();
 }
 
@@ -887,6 +979,11 @@ function useTeam(teamSlug) {
 
 function managedRepositories() {
   return state.data.repositories.filter((repo) => repo.managed && !repo.disabled && !repo.archived);
+}
+
+function selectedApplyRepositories() {
+  return [...els.applyRepoList.querySelectorAll("input[name='repositories']:checked")]
+    .map((input) => input.value);
 }
 
 function normalizeBulkPayload(payload) {

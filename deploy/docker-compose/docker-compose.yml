@@ -1,0 +1,14 @@
+services:
+  osh-github-manager:
+    image: osh-github-manager:latest
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: osh-github-manager
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${HOST_PORT:-4173}:4173"
+    volumes:
+      - ./data:/app/data

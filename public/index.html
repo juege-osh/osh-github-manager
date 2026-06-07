@@ -37,6 +37,13 @@
             <h2 id="pageTitle">总览</h2>
           </div>
           <div class="top-actions">
+            <div id="userBox" class="user-box">
+              <a id="loginLink" class="button ghost" href="/auth/github">GitHub 登录</a>
+              <div id="userMenu" class="user-menu hidden">
+                <span id="currentUserLabel"></span>
+                <button id="logoutButton" class="button ghost">退出</button>
+              </div>
+            </div>
             <div id="authBox" class="token-box hidden">
               <input id="adminTokenInput" type="password" placeholder="Admin Token" autocomplete="off" />
               <button id="saveTokenButton" class="button ghost">保存</button>
@@ -337,11 +344,10 @@
               <div class="panel-head">
                 <h3>成员申请</h3>
               </div>
+              <div id="applyLoginNotice" class="notice hidden">
+                使用 GitHub 登录后提交权限申请。
+              </div>
               <form id="applyForm" class="form-grid">
-                <label>
-                  GitHub 账号
-                  <input name="githubUsername" required placeholder="octocat" />
-                </label>
                 <label>
                   姓名
                   <input name="displayName" placeholder="张三" />
@@ -358,6 +364,10 @@
                     <option value="triage">triage</option>
                     <option value="maintain">maintain</option>
                   </select>
+                </label>
+                <label>
+                  申请项目
+                  <div id="applyRepoList" class="checkbox-list"></div>
                 </label>
                 <label>
                   备注

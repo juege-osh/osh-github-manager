@@ -2,5 +2,8 @@ node_modules/
 .env
 data/state.json
 data/state.json.tmp
+data/*.db
+data/*.db-shm
+data/*.db-wal
 *.log
 .DS_Store

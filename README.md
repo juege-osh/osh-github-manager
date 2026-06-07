@@ -1,6 +1,6 @@
 # OSH GitHub Manager
 
-一套用于批量管理 GitHub 开源项目协作者权限的本地/服务器工具。它支持成员提交 GitHub 账号、管理员审批后自动邀请到仓库、批量发邀请、批量撤销协作者、团队授权、离职回收、仓库同步、审计扫描、失败任务重试和操作日志。
+一套用于批量管理 GitHub 开源项目协作者权限的本地/服务器工具。它支持 GitHub OAuth 登录、按登录账号区分管理员/普通用户、成员提交多个仓库权限申请、管理员审批后自动邀请、批量发邀请、批量撤销协作者、团队授权、离职回收、仓库同步、审计扫描、失败任务重试和操作日志。
 
 ## 快速开始
 
@@ -12,16 +12,36 @@ npm run dev
 
 打开 `http://localhost:4173`。
 
+Docker Compose 部署文件在 `deploy/docker-compose/`。
+
 `.env` 里至少需要配置：
 
 - `GITHUB_TOKEN`: GitHub token
 - `GITHUB_OWNER`: 仓库所属用户或组织
+- `ADMIN_GITHUB_LOGINS`: 管理员 GitHub 登录名，例如 `juege-osh`
+- `APP_BASE_URL`: 站点访问地址
+- `SESSION_SECRET`: 登录会话随机密钥
+- `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET`: GitHub OAuth App
 
-如果设置了 `ADMIN_TOKEN`，所有管理接口都需要请求头 `Authorization: Bearer <ADMIN_TOKEN>`。前端会提示你填写并保存在当前浏览器本地。
+生产 OAuth 回调地址格式：
+
+```text
+${APP_BASE_URL}/auth/github/callback
+```
+
+如果部署在 `43.242.200.25:4173`，GitHub OAuth App callback URL 填：
+
+```text
+http://43.242.200.25:4173/auth/github/callback
+```
+
+`ADMIN_TOKEN` 仅建议用于脚本自动化。正常管理权限由 GitHub OAuth 登录账号判断。
 
 ## 主要功能
 
 - 成员提交 GitHub 账号申请
+- GitHub OAuth 登录，`juege-osh` 是管理员，其他账号是普通用户
+- 普通用户可选择多个仓库申请权限
 - 管理员审批成员并自动邀请到仓库
 - 支持 `pull`、`triage`、`push`、`maintain`、`admin` 权限
 - 按全部仓库或指定仓库批量邀请
@@ -39,13 +59,12 @@ npm run dev
 
 ## 生产使用建议
 
-这个版本默认使用 `data/state.json` 存储状态，适合先跑起来验证流程。管理一万项目时建议：
+这个版本使用 SQLite 存储状态，默认数据库为 `data/app.db`。管理一万项目时建议：
 
 - 部署在内网或受保护的服务器后面
-- 设置 `ADMIN_TOKEN`
 - 使用专门的 GitHub 机器人账号和最小权限 token
-- 将 `data/state.json` 定期备份
-- 后续把 `server/store.js` 替换为 PostgreSQL 或 SQLite
+- 定期备份 SQLite 数据库
+- 后续可将 `server/store.js` 替换为 PostgreSQL
 - 将 `server/jobQueue.js` 替换为 Redis/BullMQ 等持久化队列
 - 大规模项目优先使用 GitHub Teams 授权，减少逐仓库逐人的邀请数量
 

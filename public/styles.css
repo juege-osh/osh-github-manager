@@ -155,6 +155,47 @@ a {
   align-items: center;
 }
 
+.user-box,
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-menu span {
+  color: var(--muted);
+  font-weight: 800;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkbox-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.checkbox-item input {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+}
+
 .token-box input {
   width: 180px;
 }
@@ -251,6 +292,16 @@ label > textarea {
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 8px 20px rgba(31, 43, 51, 0.05);
+}
+
+.notice {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #d7e7df;
+  border-radius: 8px;
+  background: #eef8f3;
+  color: #174d3a;
+  font-weight: 800;
 }
 
 .alert.error {
@@ -727,6 +778,7 @@ dialog::backdrop {
   .metrics-grid,
   .content-grid.two,
   .settings-grid,
+  .checkbox-list,
   .nav {
     grid-template-columns: 1fr;
   }

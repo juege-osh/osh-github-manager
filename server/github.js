@@ -110,6 +110,49 @@ export async function getViewer() {
   return githubRequest("GET", "/user");
 }
 
+export async function exchangeOAuthCode(code) {
+  if (!config.githubOAuthClientId || !config.githubOAuthClientSecret) {
+    throw new Error("GitHub OAuth is not configured");
+  }
+
+  const response = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": config.githubUserAgent
+    },
+    body: JSON.stringify({
+      client_id: config.githubOAuthClientId,
+      client_secret: config.githubOAuthClientSecret,
+      code
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok || data.error) {
+    throw new Error(data.error_description || data.message || "GitHub OAuth exchange failed");
+  }
+  return data;
+}
+
+export async function getOAuthUser(accessToken) {
+  const response = await fetch(`${baseUrl}/user`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": config.githubApiVersion,
+      "User-Agent": config.githubUserAgent
+    }
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || "GitHub user fetch failed");
+  }
+  return data;
+}
+
 export async function listRepositories() {
   const encodedOwner = encodeURIComponent(config.githubOwner);
 

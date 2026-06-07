@@ -41,7 +41,16 @@ export const config = {
   adminToken: process.env.ADMIN_TOKEN || "",
   jobConcurrency: Math.max(1, numberFromEnv("JOB_CONCURRENCY", 1)),
   jobDelayMs: numberFromEnv("JOB_DELAY_MS", 500),
-  dataFile: path.join(rootDir, "data", "state.json")
+  dataFile: path.join(rootDir, "data", "state.json"),
+  databaseFile: process.env.DATABASE_FILE || path.join(rootDir, "data", "app.db"),
+  sessionSecret: process.env.SESSION_SECRET || "change-me-in-production",
+  appBaseUrl: process.env.APP_BASE_URL || `http://localhost:${numberFromEnv("PORT", 4173)}`,
+  githubOAuthClientId: process.env.GITHUB_OAUTH_CLIENT_ID || "",
+  githubOAuthClientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET || "",
+  adminGithubLogins: (process.env.ADMIN_GITHUB_LOGINS || process.env.GITHUB_OWNER || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
 };
 
 export function publicConfig() {
@@ -52,6 +61,9 @@ export function publicConfig() {
     githubOwner: config.githubOwner || null,
     githubApiVersion: config.githubApiVersion,
     githubMaxRetries: config.githubMaxRetries,
+    oauthConfigured: Boolean(config.githubOAuthClientId && config.githubOAuthClientSecret),
+    appBaseUrl: config.appBaseUrl,
+    adminGithubLogins: config.adminGithubLogins,
     jobConcurrency: config.jobConcurrency,
     jobDelayMs: config.jobDelayMs
   };

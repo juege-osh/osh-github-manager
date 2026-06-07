@@ -2,15 +2,34 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config, publicConfig } from "./config.js";
-import { getUser, getViewer, listRepositories, listTeams } from "./github.js";
+import {
+  exchangeOAuthCode,
+  getOAuthUser,
+  getUser,
+  getViewer,
+  listRepositories,
+  listTeams
+} from "./github.js";
 import { createJob, retryJob, startJobQueue } from "./jobQueue.js";
 import { addAudit, getState, loadState, mutateState } from "./store.js";
-import { csvEscape, normalizeLogin, normalizeRepoName, nowIso, parseCsvLine, safeIncludes, unique } from "./utils.js";
+import { csvEscape, id, normalizeLogin, normalizeRepoName, nowIso, parseCsvLine, safeIncludes, unique } from "./utils.js";
+import {
+  authMiddleware,
+  clearSessionCookie,
+  createOrUpdateOAuthUser,
+  createSession,
+  destroySession,
+  publicUser,
+  requireAdminUser,
+  requireLogin,
+  setSessionCookie
+} from "./auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
 app.use(express.json({ limit: "1mb" }));
+app.use(authMiddleware);
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 await loadState();
@@ -19,6 +38,49 @@ startJobQueue();
 app.get("/api/config", (_req, res) => {
   res.json(publicConfig());
 });
+
+app.get("/api/me", (req, res) => {
+  res.json({ user: publicUser(req.currentUser), oauthConfigured: publicConfig().oauthConfigured });
+});
+
+app.get("/api/public/repositories", (_req, res) => {
+  res.json({
+    repositories: getState().repositories.filter((repo) => repo.managed && !repo.disabled && !repo.archived)
+  });
+});
+
+app.get("/auth/github", (req, res) => {
+  if (!config.githubOAuthClientId) {
+    return res.status(500).send("GitHub OAuth is not configured");
+  }
+
+  const stateValue = Math.random().toString(36).slice(2);
+  const callbackUrl = new URL("/auth/github/callback", config.appBaseUrl).toString();
+  const url = new URL("https://github.com/login/oauth/authorize");
+  url.searchParams.set("client_id", config.githubOAuthClientId);
+  url.searchParams.set("redirect_uri", callbackUrl);
+  url.searchParams.set("scope", "read:user user:email");
+  url.searchParams.set("state", stateValue);
+  res.redirect(url.toString());
+});
+
+app.get("/auth/github/callback", asyncHandler(async (req, res) => {
+  const code = String(req.query.code || "");
+  if (!code) return res.status(400).send("Missing GitHub OAuth code");
+
+  const token = await exchangeOAuthCode(code);
+  const profile = await getOAuthUser(token.access_token);
+  const user = await createOrUpdateOAuthUser(profile);
+  const session = await createSession(user);
+  setSessionCookie(res, session);
+  res.redirect("/");
+}));
+
+app.post("/api/logout", requireLogin, asyncHandler(async (req, res) => {
+  await destroySession(req);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+}));
 
 app.get("/api/health", async (_req, res) => {
   const state = getState();
@@ -40,12 +102,13 @@ app.get("/api/github/viewer", requireAdmin, asyncHandler(async (_req, res) => {
   res.json(await getViewer());
 }));
 
-app.post("/api/apply", asyncHandler(async (req, res) => {
-  const githubUsername = normalizeLogin(req.body.githubUsername);
-  const displayName = String(req.body.displayName || "").trim();
-  const email = String(req.body.email || "").trim();
+app.post("/api/apply", requireLogin, asyncHandler(async (req, res) => {
+  const githubUsername = req.currentUser.githubLogin;
+  const displayName = String(req.body.displayName || req.currentUser.name || "").trim();
+  const email = String(req.body.email || req.currentUser.email || "").trim();
   const note = String(req.body.note || "").trim();
   const requestedPermission = normalizePermission(req.body.requestedPermission || getState().settings.defaultPermission);
+  const requestedRepositories = resolveRequestedRepositories(req.body.repositories || req.body.requestedRepositories);
 
   if (!githubUsername) {
     return res.status(400).json({ error: "GitHub username is required" });
@@ -68,6 +131,7 @@ app.post("/api/apply", asyncHandler(async (req, res) => {
       member.email = email || member.email;
       member.note = note || member.note;
       member.requestedPermission = requestedPermission;
+      member.requestedRepositories = requestedRepositories;
       member.githubProfile = simplifyGitHubUser(githubProfile);
       member.updatedAt = nowIso();
       if (member.status === "rejected") member.status = "pending";
@@ -79,6 +143,7 @@ app.post("/api/apply", asyncHandler(async (req, res) => {
         email,
         note,
         requestedPermission,
+        requestedRepositories,
         status,
         role: "contributor",
         tags: [],
@@ -97,8 +162,22 @@ app.post("/api/apply", asyncHandler(async (req, res) => {
       action: "member.apply",
       targetType: "member",
       target: githubUsername,
-      details: { requestedPermission }
+      details: { requestedPermission, requestedRepositories }
     });
+
+    const accessRequest = {
+      id: id("request"),
+      githubUsername,
+      requestedPermission,
+      repositories: requestedRepositories,
+      note,
+      status: "pending",
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      decidedAt: null,
+      decidedBy: null
+    };
+    state.accessRequests.unshift(accessRequest);
   });
 
   res.status(201).json({ member });
@@ -180,12 +259,15 @@ app.patch("/api/members/:username", requireAdmin, asyncHandler(async (req, res) 
 app.post("/api/members/:username/approve", requireAdmin, asyncHandler(async (req, res) => {
   const username = normalizeLogin(req.params.username);
   const permission = normalizePermission(req.body.permission || getState().settings.defaultPermission);
-  const repositories = resolveRepositories(req.body.repositories);
+  let repositories = [];
   let member;
 
   await mutateState((state) => {
     member = state.members.find((item) => item.githubUsername === username);
     if (!member) throw new HttpError(404, "Member not found");
+    repositories = req.body.repositories !== undefined
+      ? resolveRepositories(req.body.repositories)
+      : resolveRepositories(member.requestedRepositories || []);
 
     member.status = "approved";
     member.requestedPermission = permission;
@@ -200,6 +282,15 @@ app.post("/api/members/:username/approve", requireAdmin, asyncHandler(async (req
       target: username,
       details: { permission, repositories }
     });
+
+    for (const request of state.accessRequests.filter((item) => item.githubUsername === username && item.status === "pending")) {
+      request.status = "approved";
+      request.permission = permission;
+      request.repositories = repositories;
+      request.decidedAt = nowIso();
+      request.decidedBy = "admin";
+      request.updatedAt = nowIso();
+    }
   });
 
   let job = null;
@@ -230,6 +321,13 @@ app.post("/api/members/:username/reject", requireAdmin, asyncHandler(async (req,
     member.rejectedAt = nowIso();
     member.rejectionReason = String(req.body.reason || "").trim();
     member.updatedAt = nowIso();
+    for (const request of state.accessRequests.filter((item) => item.githubUsername === username && item.status === "pending")) {
+      request.status = "rejected";
+      request.reason = member.rejectionReason;
+      request.decidedAt = nowIso();
+      request.decidedBy = "admin";
+      request.updatedAt = nowIso();
+    }
     addAudit({
       actor: "admin",
       action: "member.reject",
@@ -300,7 +398,48 @@ app.post("/api/members/:username/offboard", requireAdmin, asyncHandler(async (re
   res.status(202).json({ member, job });
 }));
 
-app.get("/api/repositories", requireAdmin, (req, res) => {
+app.post("/api/members/:username/access/grant", requireAdmin, asyncHandler(async (req, res) => {
+  const username = normalizeLogin(req.params.username);
+  const repositories = resolveRepositories(req.body.repositories);
+  const permission = normalizePermission(req.body.permission || getState().settings.defaultPermission);
+  if (repositories.length === 0) return res.status(400).json({ error: "At least one repository is required" });
+
+  await upsertMember({ githubUsername: username, requestedPermission: permission, status: "approved" }, "admin");
+  const job = await createJob({
+    type: "invite",
+    actor: "admin",
+    title: `Grant ${permission} to ${username} in ${repositories.length} repositories`,
+    payload: {
+      usernames: [username],
+      repositories,
+      permission,
+      dryRun: Boolean(req.body.dryRun)
+    }
+  });
+
+  res.status(202).json({ job });
+}));
+
+app.post("/api/members/:username/access/remove", requireAdmin, asyncHandler(async (req, res) => {
+  const username = normalizeLogin(req.params.username);
+  const repositories = resolveRepositories(req.body.repositories);
+  if (repositories.length === 0) return res.status(400).json({ error: "At least one repository is required" });
+
+  const job = await createJob({
+    type: "remove",
+    actor: "admin",
+    title: `Remove ${username} from ${repositories.length} repositories`,
+    payload: {
+      usernames: [username],
+      repositories,
+      dryRun: Boolean(req.body.dryRun)
+    }
+  });
+
+  res.status(202).json({ job });
+}));
+
+app.get("/api/repositories", requireLogin, (req, res) => {
   const { q = "", managed = "" } = req.query;
   const repositories = getState().repositories.filter((repo) => {
     if (managed === "true" && !repo.managed) return false;
@@ -671,16 +810,32 @@ app.patch("/api/settings", requireAdmin, asyncHandler(async (req, res) => {
   res.json({ settings: getState().settings });
 }));
 
-app.get("/api/state", requireAdmin, (_req, res) => {
+app.get("/api/state", requireLogin, (req, res) => {
   const state = getState();
+  if (req.currentUser?.role !== "admin") {
+    return res.json({
+      members: state.members.filter((member) => member.githubUsername === req.currentUser.githubLogin),
+      repositories: state.repositories.filter((repo) => repo.managed && !repo.disabled),
+      teams: [],
+      accessRequests: state.accessRequests.filter((request) => request.githubUsername === req.currentUser.githubLogin),
+      jobs: [],
+      auditLog: [],
+      settings: state.settings,
+      config: publicConfig(),
+      currentUser: publicUser(req.currentUser)
+    });
+  }
+
   res.json({
     members: state.members,
     repositories: state.repositories,
     teams: state.teams,
+    accessRequests: state.accessRequests,
     jobs: state.jobs.slice(0, 50),
     auditLog: state.auditLog.slice(0, 100),
     settings: state.settings,
-    config: publicConfig()
+    config: publicConfig(),
+    currentUser: publicUser(req.currentUser)
   });
 });
 
@@ -697,15 +852,13 @@ app.listen(config.port, () => {
 });
 
 function requireAdmin(req, res, next) {
-  if (!config.adminToken) return next();
-
   const header = req.get("Authorization") || "";
   const token = header.replace(/^Bearer\s+/i, "");
-  if (token !== config.adminToken) {
-    return res.status(401).json({ error: "Admin token required" });
+  if (config.adminToken && token === config.adminToken) {
+    return next();
   }
 
-  next();
+  return requireAdminUser(req, res, next);
 }
 
 function asyncHandler(callback) {
@@ -844,6 +997,12 @@ function resolveRepositories(input) {
 
   const names = Array.isArray(input) ? input : parseCsvLine(input);
   return unique(names.map(normalizeRepoName));
+}
+
+function resolveRequestedRepositories(input) {
+  const names = Array.isArray(input) ? input : parseCsvLine(input);
+  const available = new Set(getState().repositories.map((repo) => repo.name));
+  return unique(names.map(normalizeRepoName)).filter((name) => available.has(name));
 }
 
 function resolveTeamSlugs(input) {
