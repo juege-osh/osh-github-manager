@@ -464,8 +464,11 @@ function renderAuth() {
   els.loginLink.classList.toggle("hidden", Boolean(user));
   els.userMenu.classList.toggle("hidden", !user);
   els.currentUserLabel.textContent = user ? `${user.githubLogin} · ${user.role === "admin" ? "管理员" : "普通用户"}` : "";
-  els.applyForm.classList.toggle("hidden", !user);
-  els.applyLoginNotice.classList.toggle("hidden", Boolean(user));
+  els.applyForm.classList.remove("hidden");
+  els.applyLoginNotice.classList.add("hidden");
+  if (user?.role !== "admin" && user?.githubLogin && !els.applyForm.elements.githubUsername.value) {
+    els.applyForm.elements.githubUsername.value = user.githubLogin;
+  }
 }
 
 function applyRoleVisibility() {

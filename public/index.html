@@ -345,16 +345,20 @@
                 <h3>成员申请</h3>
               </div>
               <div id="applyLoginNotice" class="notice hidden">
-                使用 GitHub 登录后提交权限申请。
+                填写 GitHub 账号后提交权限申请。
               </div>
               <form id="applyForm" class="form-grid">
                 <label>
-                  姓名
-                  <input name="displayName" placeholder="张三" />
+                  GitHub 账号
+                  <input name="githubUsername" required placeholder="octocat" autocomplete="username" />
+                </label>
+                <label>
+                  微信昵称
+                  <input name="displayName" placeholder="微信昵称" />
                 </label>
                 <label>
                   邮箱
-                  <input name="email" type="email" placeholder="name@example.com" />
+                  <input name="email" type="email" placeholder="选填" />
                 </label>
                 <label>
                   申请权限

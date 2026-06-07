@@ -105,16 +105,16 @@ app.get("/api/github/viewer", requireAdmin, asyncHandler(async (_req, res) => {
   res.json(await getViewer());
 }));
 
-app.post("/api/apply", requireLogin, asyncHandler(async (req, res) => {
-  const githubUsername = req.currentUser.githubLogin;
-  const displayName = String(req.body.displayName || req.currentUser.name || "").trim();
-  const email = String(req.body.email || req.currentUser.email || "").trim();
+app.post("/api/apply", asyncHandler(async (req, res) => {
+  const githubUsername = normalizeLogin(req.body.githubUsername || req.currentUser?.githubLogin);
+  const displayName = String(req.body.displayName || req.currentUser?.name || "").trim();
+  const email = String(req.body.email || req.currentUser?.email || "").trim();
   const note = String(req.body.note || "").trim();
   const requestedPermission = normalizePermission(req.body.requestedPermission || getState().settings.defaultPermission);
   const requestedRepositories = resolveRequestedRepositories(req.body.repositories || req.body.requestedRepositories);
 
   if (!githubUsername) {
-    return res.status(400).json({ error: "GitHub username is required" });
+    return res.status(400).json({ error: "GitHub 账号必填" });
   }
 
   let githubProfile = null;
@@ -161,7 +161,7 @@ app.post("/api/apply", requireLogin, asyncHandler(async (req, res) => {
     }
 
     addAudit({
-      actor: githubUsername,
+      actor: req.currentUser?.githubLogin || githubUsername,
       action: "member.apply",
       targetType: "member",
       target: githubUsername,
