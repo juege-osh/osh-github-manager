@@ -40,6 +40,9 @@ app.get("/api/config", (_req, res) => {
 });
 
 app.get("/api/me", (req, res) => {
+  if (isAdminTokenRequest(req)) {
+    return res.json({ user: localAdminUser(), oauthConfigured: publicConfig().oauthConfigured });
+  }
   res.json({ user: publicUser(req.currentUser), oauthConfigured: publicConfig().oauthConfigured });
 });
 
@@ -810,19 +813,20 @@ app.patch("/api/settings", requireAdmin, asyncHandler(async (req, res) => {
   res.json({ settings: getState().settings });
 }));
 
-app.get("/api/state", requireLogin, (req, res) => {
+app.get("/api/state", requireLoginOrAdminToken, (req, res) => {
   const state = getState();
-  if (req.currentUser?.role !== "admin") {
+  const currentUser = isAdminTokenRequest(req) ? localAdminUser() : publicUser(req.currentUser);
+  if (currentUser?.role !== "admin") {
     return res.json({
-      members: state.members.filter((member) => member.githubUsername === req.currentUser.githubLogin),
+      members: state.members.filter((member) => member.githubUsername === currentUser.githubLogin),
       repositories: state.repositories.filter((repo) => repo.managed && !repo.disabled),
       teams: [],
-      accessRequests: state.accessRequests.filter((request) => request.githubUsername === req.currentUser.githubLogin),
+      accessRequests: state.accessRequests.filter((request) => request.githubUsername === currentUser.githubLogin),
       jobs: [],
       auditLog: [],
       settings: state.settings,
       config: publicConfig(),
-      currentUser: publicUser(req.currentUser)
+      currentUser
     });
   }
 
@@ -835,7 +839,7 @@ app.get("/api/state", requireLogin, (req, res) => {
     auditLog: state.auditLog.slice(0, 100),
     settings: state.settings,
     config: publicConfig(),
-    currentUser: publicUser(req.currentUser)
+    currentUser
   });
 });
 
@@ -859,6 +863,28 @@ function requireAdmin(req, res, next) {
   }
 
   return requireAdminUser(req, res, next);
+}
+
+function requireLoginOrAdminToken(req, res, next) {
+  if (isAdminTokenRequest(req)) return next();
+  return requireLogin(req, res, next);
+}
+
+function isAdminTokenRequest(req) {
+  if (!config.adminToken) return false;
+  const header = req.get("Authorization") || "";
+  const token = header.replace(/^Bearer\s+/i, "");
+  return token === config.adminToken;
+}
+
+function localAdminUser() {
+  return {
+    githubLogin: config.adminGithubLogins[0] || config.githubOwner || "admin",
+    name: "Local Admin",
+    avatarUrl: "",
+    htmlUrl: config.githubOwner ? `https://github.com/${config.githubOwner}` : "",
+    role: "admin"
+  };
 }
 
 function asyncHandler(callback) {
